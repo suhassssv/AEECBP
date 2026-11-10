@@ -312,11 +312,21 @@
     <div id="conn-err" class="warn-box" style="display:none;"></div>
 
     <hr />
-    <h3>🎛️ Knob Calibration</h3>
+    <h3>🔑 Ignition &amp; IR Controls</h3>
+    <div class="caption">Wave IR (D2) or press below: Start/Stop when parked, Hold+Throttle for 3500 RPM Launch, Hold while moving to Brake.</div>
+    <button id="btn-eng-toggle" class="primary" disabled>🔘 Start / Stop Engine</button>
+    <button id="btn-brake-hold" disabled>🛑 Hold Brake / Launch</button>
+
+    <hr />
+    <h3>🎛️ Knob &amp; Sensor Calibration</h3>
     <div class="caption">For knobs with limited travel: Start, sweep full min → max, then Save.</div>
     <div class="btn-row">
       <button id="btn-cal-start" disabled>🎯 Start</button>
       <button id="btn-cal-save" disabled>✅ Save</button>
+    </div>
+    <div class="btn-row">
+      <button id="btn-pot-invert" disabled>🔄 Invert Pot</button>
+      <button id="btn-ir-invert" disabled>📡 Invert IR</button>
     </div>
     <button id="btn-cal-reset" disabled>↺ Reset Default Range</button>
 
@@ -569,6 +579,7 @@
         <g transform="translate(545, 150)" opacity="0.25"><polygon points="0,10 16,0 16,6 30,6 30,14 16,14 16,20" fill="#2bd9ff"/></g>
         <g transform="translate(665, 150)" opacity="0.25"><polygon points="30,10 14,0 14,6 0,6 0,14 14,14 14,20" fill="#2bd9ff"/></g>
         <g transform="translate(620, 235)">
+          <text x="0" y="-42" id="mid-badge" fill="#38b6ff" font-size="12" font-weight="800" letter-spacing="1.8" text-anchor="middle">WAITING LINK</text>
           <text x="0" y="0" fill="#8cb9e6" font-size="13" font-weight="600" letter-spacing="2" text-anchor="middle">SPEED</text>
           <text id="mid-speed" x="0" y="38" fill="#ffffff" font-size="38" font-weight="900" text-anchor="middle" filter="drop-shadow(0 0 6px #0099ff)">0</text>
           <text x="0" y="58" fill="#42d9ff" font-size="12" font-weight="700" letter-spacing="1" text-anchor="middle">KM / H</text>
@@ -674,6 +685,12 @@
       lastSpeed: 0,
       lastGear: 1,
       lastThrottle: 0,
+      engState: 0, // 0=OFF, 1=CRANKING, 2=RUNNING
+      launchArmed: false,
+      braking: false,
+      irActive: false,
+      potInvert: false,
+      irActiveLow: true,
       lastRxMs: 0,
       lastRaw: null,
       calActive: false,
@@ -689,6 +706,7 @@
     const needleFuel = el('needle-fuel');
     const needleTemp = el('needle-temp');
     const midSpeed = el('mid-speed');
+    const midBadge = el('mid-badge');
 
     if (!('serial' in navigator)) {
       el('serial-unsupported').style.display = 'block';
@@ -727,7 +745,7 @@
         if (kv.throttle !== undefined) throttle = Math.round(kv.throttle);
         else if (kv.thr !== undefined) throttle = Math.round(kv.thr);
 
-        for (const mk of ['raw', 'cal', 'adcmin', 'adcmax']) {
+        for (const mk of ['raw', 'cal', 'adcmin', 'adcmax', 'eng', 'launch', 'brake', 'ir', 'inv', 'irlow']) {
           if (kv[mk] !== undefined) meta[mk] = Math.round(kv[mk]);
         }
       } else if (parts.length === 5) {
@@ -773,12 +791,24 @@
       const c = state.connected;
       el('btn-connect').disabled = c || !('serial' in navigator);
       el('btn-disconnect').disabled = !c;
+      el('btn-eng-toggle').disabled = !c;
+      el('btn-brake-hold').disabled = !c;
       el('btn-cal-start').disabled = !c;
       el('btn-cal-save').disabled = !c;
+      el('btn-pot-invert').disabled = !c;
+      el('btn-ir-invert').disabled = !c;
       el('btn-cal-reset').disabled = !c;
       const pill = el('conn-pill');
       pill.textContent = c ? '● CONNECTED' : '● DISCONNECTED';
       pill.className = 'status-pill ' + (c ? 'connected' : 'disconnected');
+    }
+
+    if ('serial' in navigator) {
+      navigator.serial.addEventListener('disconnect', (ev) => {
+        if (state.port && ev.target === state.port) {
+          disconnectSerial();
+        }
+      });
     }
 
     async function connectSerial() {
@@ -821,11 +851,17 @@
                   if (parsed.meta.cal !== undefined) state.calActive = (parsed.meta.cal === 1);
                   if (parsed.meta.adcmin !== undefined) state.calMin = parsed.meta.adcmin;
                   if (parsed.meta.adcmax !== undefined) state.calMax = parsed.meta.adcmax;
+                  if (parsed.meta.eng !== undefined) state.engState = parsed.meta.eng;
+                  if (parsed.meta.launch !== undefined) state.launchArmed = (parsed.meta.launch === 1);
+                  if (parsed.meta.brake !== undefined) state.braking = (parsed.meta.brake === 1);
+                  if (parsed.meta.ir !== undefined) state.irActive = (parsed.meta.ir === 1);
+                  if (parsed.meta.inv !== undefined) state.potInvert = (parsed.meta.inv === 1);
+                  if (parsed.meta.irlow !== undefined) state.irActiveLow = (parsed.meta.irlow === 1);
 
                   if (!state.demoMode) {
                     state.history.push({ rpm: parsed.rpm, speed: parsed.speed });
                     if (state.history.length > 300) state.history.shift();
-                    engineAudio.update(parsed.rpm, parsed.throttle, parsed.gear);
+                    engineAudio.update(parsed.rpm, parsed.throttle, parsed.gear, state.engState, state.launchArmed);
                   }
                 }
               } else if (state.rxBuffer.length > 500) {
@@ -855,6 +891,10 @@
       state.reader = null;
       state.writer = null;
       state.calActive = false;
+      state.engState = 0;
+      state.launchArmed = false;
+      state.braking = false;
+      state.irActive = false;
       state.lastRpm = 0;
       state.lastSpeed = 0;
       state.lastThrottle = 0;
@@ -863,8 +903,16 @@
 
     el('btn-connect').addEventListener('click', connectSerial);
     el('btn-disconnect').addEventListener('click', disconnectSerial);
+    el('btn-eng-toggle').addEventListener('click', () => sendSerialCmd('ENG_TOGGLE'));
+    const brakeBtn = el('btn-brake-hold');
+    brakeBtn.addEventListener('pointerdown', () => sendSerialCmd('BRAKE_ON'));
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => {
+      brakeBtn.addEventListener(ev, () => { if (state.connected) sendSerialCmd('BRAKE_OFF'); });
+    });
     el('btn-cal-start').addEventListener('click', () => { state.calActive = true; sendSerialCmd('CAL_START'); });
     el('btn-cal-save').addEventListener('click', () => { state.calActive = false; sendSerialCmd('CAL_SAVE'); });
+    el('btn-pot-invert').addEventListener('click', () => sendSerialCmd('POT_INVERT'));
+    el('btn-ir-invert').addEventListener('click', () => sendSerialCmd('IR_INVERT'));
     el('btn-cal-reset').addEventListener('click', () => { state.calActive = false; sendSerialCmd('CAL_RESET'); });
 
     el('toggle-demo').addEventListener('change', (e) => {
@@ -1104,6 +1152,29 @@
         this.oscTurbo = turboOsc;
         this.turboGain = turboG;
 
+        // 12V Starter motor gear whine + compression chug bus
+        const starterOsc1 = ctx.createOscillator();
+        starterOsc1.type = 'sawtooth';
+        starterOsc1.frequency.value = 370;
+        const starterOsc2 = ctx.createOscillator();
+        starterOsc2.type = 'triangle';
+        starterOsc2.frequency.value = 740;
+        const starterBp = ctx.createBiquadFilter();
+        starterBp.type = 'bandpass';
+        starterBp.frequency.value = 580;
+        starterBp.Q.value = 1.6;
+        const starterG = ctx.createGain();
+        starterG.gain.value = 0;
+        starterOsc1.connect(starterBp);
+        starterOsc2.connect(starterBp);
+        starterBp.connect(starterG);
+        starterG.connect(master);
+        starterOsc1.start();
+        starterOsc2.start();
+        this.starterOsc1 = starterOsc1;
+        this.starterOsc2 = starterOsc2;
+        this.starterGain = starterG;
+
         preMix.connect(shaper);
         shaper.connect(exhaustBus);
         exhaustBus.connect(chestPeak);
@@ -1162,12 +1233,37 @@
         }
       },
 
-      update(rpm, throttle, gear = 1) {
+      update(rpm, throttle, gear = 1, engState = 2, launchArmed = false) {
         if (!this.started || !this.ctx) return;
         const now = this.ctx.currentTime;
         const nowMs = performance.now();
 
-        if (!this.enabled || rpm < 100) {
+        if (!this.enabled) {
+          this.masterGain.gain.setTargetAtTime(0, now, 0.05);
+          this.starterGain.gain.setTargetAtTime(0, now, 0.03);
+          this.prevRpm = rpm;
+          this.prevThrottle = throttle;
+          this.prevGear = gear;
+          return;
+        }
+
+        // Starter motor cranking mode (engState === 1)
+        if (engState === 1) {
+          const chug = 0.5 + 0.5 * Math.sin(nowMs * 0.038); // ~6 Hz compression strokes
+          this.starterOsc1.frequency.setTargetAtTime(340 + 75 * chug, now, 0.015);
+          this.starterOsc2.frequency.setTargetAtTime(680 + 150 * chug, now, 0.015);
+          this.starterGain.gain.setTargetAtTime(0.18 + 0.24 * chug, now, 0.015);
+          this.turboGain.gain.setTargetAtTime(0, now, 0.03);
+          this.masterGain.gain.setTargetAtTime(this.volume * 0.65, now, 0.02);
+          this.prevRpm = rpm;
+          this.prevThrottle = throttle;
+          this.prevGear = gear;
+          return;
+        }
+
+        this.starterGain.gain.setTargetAtTime(0, now, 0.025);
+
+        if (rpm < 100 || engState === 0) {
           this.masterGain.gain.setTargetAtTime(0, now, 0.05);
           this.prevRpm = rpm;
           this.prevThrottle = throttle;
@@ -1215,6 +1311,12 @@
           this.triggerPop(0.85);
         }
 
+        // Launch Control 3500 RPM two-step anti-lag pops
+        if (launchArmed && (nowMs - this.lastPopMs) > (95 + Math.random() * 55)) {
+          this.lastPopMs = nowMs;
+          this.triggerPop(0.75);
+        }
+
         // Overrun exhaust pops & crackles when lifting off / decelerating from > 1900 RPM
         const rpmDrop = this.prevRpm - rpm;
         const thrDrop = this.prevThrottle - throttle;
@@ -1226,6 +1328,8 @@
         let mod = 1.0;
         if (nowMs < this.shiftDipUntil) {
           mod = 0.35;
+        } else if (launchArmed) {
+          mod = (Math.floor(nowMs / 48) % 2 === 0) ? 1.0 : 0.45;
         } else if (rpmClamped >= 7050) {
           mod = (Math.floor(nowMs / 55) % 2 === 0) ? 1.0 : 0.42;
         }
@@ -1254,14 +1358,20 @@
     // -------------------------------
     let lastChartPush = 0;
     function render() {
+      const receiving = (Date.now() - state.lastRxMs) < 2000;
       const fuel = state.demoMode ? Number(el('rng-fuel').value) : 75;
       const rpm = state.demoMode ? Number(el('rng-rpm').value) : state.lastRpm;
       const speed = state.demoMode ? Number(el('rng-speed').value) : state.lastSpeed;
       const gear = state.lastGear;
       const throttle = state.demoMode ? Math.min(100, Math.round((rpm / 8000) * 100)) : state.lastThrottle;
       const temp = state.demoMode ? Number(el('rng-temp').value) : (85 + Math.floor(throttle * 0.1));
+      const eng = state.demoMode ? (rpm > 0 ? 2 : 0) : state.engState;
 
-      engineAudio.update(rpm, throttle, gear);
+      if (!state.demoMode && state.connected && !receiving) {
+        engineAudio.update(0, 0, gear, 0, false);
+      } else {
+        engineAudio.update(rpm, throttle, gear, eng, state.launchArmed && !state.demoMode);
+      }
 
       if (state.demoMode && Date.now() - lastChartPush > 200) {
         lastChartPush = Date.now();
@@ -1280,15 +1390,38 @@
       needleTemp.setAttribute('transform', `rotate(${tempDeg.toFixed(1)}, 1135, 325)`);
       midSpeed.textContent = String(Math.round(speed));
 
-      const parkBrake = speed < 5;
-      const pbColor = parkBrake ? '#38b6ff' : '#1c324a';
-      el('icon-park').setAttribute('filter', parkBrake ? 'url(#neon-glow)' : '');
+      if (state.demoMode) {
+        midBadge.textContent = 'DEMO MODE';
+        midBadge.setAttribute('fill', '#38b6ff');
+      } else if (!state.connected) {
+        midBadge.textContent = 'WAITING LINK';
+        midBadge.setAttribute('fill', '#7f97b4');
+      } else if (eng === 0) {
+        midBadge.textContent = 'WAVE IR TO START';
+        midBadge.setAttribute('fill', '#fbbf24');
+      } else if (eng === 1) {
+        midBadge.textContent = 'CRANKING...';
+        midBadge.setAttribute('fill', '#fbbf24');
+      } else if (state.launchArmed) {
+        midBadge.textContent = 'LAUNCH ARMED';
+        midBadge.setAttribute('fill', '#ff6b35');
+      } else if (state.braking) {
+        midBadge.textContent = 'BRAKING';
+        midBadge.setAttribute('fill', '#ff4444');
+      } else {
+        midBadge.textContent = `GEAR D${Math.round(gear)}`;
+        midBadge.setAttribute('fill', '#38b6ff');
+      }
+
+      const parkBrake = speed < 5 || state.braking;
+      const pbColor = parkBrake ? (state.braking ? '#ff4444' : '#38b6ff') : '#1c324a';
+      el('icon-park').setAttribute('filter', parkBrake ? (state.braking ? 'url(#red-glow)' : 'url(#neon-glow)') : '');
       el('park-c').setAttribute('stroke', pbColor);
       el('park-p1').setAttribute('stroke', pbColor);
       el('park-p2').setAttribute('stroke', pbColor);
       el('park-t').setAttribute('fill', pbColor);
 
-      const warning = rpm >= 6500;
+      const warning = rpm >= 6500 || state.launchArmed;
       const wColor = warning ? '#ff4444' : '#38b6ff';
       el('icon-warn').setAttribute('filter', warning ? 'url(#red-glow)' : 'url(#neon-glow)');
       el('warn-c').setAttribute('stroke', wColor);
@@ -1298,13 +1431,19 @@
 
       el('m-speed').textContent = `${Math.round(speed)} KM/H`;
       el('m-rpm').textContent = `${Math.round(rpm).toLocaleString()} RPM`;
-      el('m-gear').textContent = `${Math.round(gear)}`;
+      el('m-gear').textContent = state.demoMode
+        ? `${Math.round(gear)}`
+        : (eng === 0 ? 'P' : (eng === 1 ? 'CRK' : (state.launchArmed ? 'LCH' : `D${Math.round(gear)}`)));
       el('m-throttle').textContent = `${Math.round(throttle)} %`;
 
-      const receiving = (Date.now() - state.lastRxMs) < 2000;
       el('m-status').textContent = state.demoMode
         ? 'DEMO'
-        : (!state.connected ? 'WAITING LINK' : (receiving ? 'LIVE' : 'NO DATA'));
+        : (!state.connected ? 'WAITING LINK'
+          : (!receiving ? 'NO DATA'
+            : (eng === 0 ? 'ENGINE OFF'
+              : (eng === 1 ? 'CRANKING'
+                : (state.launchArmed ? 'LAUNCH ARMED'
+                  : (state.braking ? 'BRAKING' : 'LIVE'))))));
 
       const calBanner = el('cal-banner');
       const adcCap = el('adc-caption');
@@ -1316,7 +1455,10 @@
         } else {
           calBanner.style.display = 'none';
           adcCap.style.display = 'block';
-          adcCap.innerHTML = `Potentiometer ADC: <code>${state.lastRaw}</code> | Active Range: <code>[${state.calMin} .. ${state.calMax}]</code>`;
+          const potMode = state.potInvert ? 'Inverted' : 'Normal';
+          const irPol = state.irActiveLow ? 'Active-LOW' : 'Active-HIGH';
+          const irTxt = state.irActive ? 'DETECTED' : 'CLEAR';
+          adcCap.innerHTML = `Potentiometer ADC: <code>${state.lastRaw}</code> | Range: <code>[${state.calMin} .. ${state.calMax}] (${potMode})</code> | IR (D2): <code>${irTxt} (${irPol})</code>`;
         }
       } else {
         calBanner.style.display = 'none';
