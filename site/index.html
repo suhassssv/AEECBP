@@ -321,6 +321,19 @@
     <button id="btn-cal-reset" disabled>↺ Reset Default Range</button>
 
     <hr />
+    <h3>🔊 Engine Audio</h3>
+    <label class="toggle-row">
+      <span>Enable Engine Rev Sound</span>
+      <input type="checkbox" id="toggle-sound" />
+    </label>
+    <div id="sound-controls" class="slider-group">
+      <div class="slider-item">
+        <label><span>Volume</span><span id="lbl-sound-vol">60%</span></label>
+        <input type="range" id="rng-vol" min="0" max="100" step="1" value="60" />
+      </div>
+    </div>
+
+    <hr />
     <h3>🕹️ Simulation &amp; Controls</h3>
     <label class="toggle-row">
       <span>Enable Manual / Demo Sliders</span>
@@ -812,6 +825,7 @@
                   if (!state.demoMode) {
                     state.history.push({ rpm: parsed.rpm, speed: parsed.speed });
                     if (state.history.length > 300) state.history.shift();
+                    engineAudio.update(parsed.rpm, parsed.throttle);
                   }
                 }
               } else if (state.rxBuffer.length > 500) {
@@ -841,6 +855,9 @@
       state.reader = null;
       state.writer = null;
       state.calActive = false;
+      state.lastRpm = 0;
+      state.lastSpeed = 0;
+      state.lastThrottle = 0;
       syncConnectionUi();
     }
 
@@ -912,6 +929,188 @@
     }
 
     // -------------------------------
+    // WEB AUDIO V8 ENGINE SYNTHESIZER
+    // -------------------------------
+    const engineAudio = {
+      enabled: false,
+      volume: 0.6,
+      ctx: null,
+      started: false,
+      masterGain: null,
+      lpFilter: null,
+      oscSub: null,
+      oscFiring: null,
+      osc2nd: null,
+      osc3rd: null,
+      gain3rd: null,
+      noiseGain: null,
+      noiseFilter: null,
+      lfoGain: null,
+
+      init() {
+        if (this.started) return;
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        this.ctx = ctx;
+
+        // Soft-clipping saturation curve for warm exhaust harmonics
+        const shaper = ctx.createWaveShaper();
+        const n = 1024;
+        const curve = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          const x = (i * 2) / n - 1;
+          curve[i] = Math.tanh(x * 2.2);
+        }
+        shaper.curve = curve;
+        shaper.oversample = '2x';
+
+        const lp = ctx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.value = 260;
+        lp.Q.value = 2.4;
+        this.lpFilter = lp;
+
+        const master = ctx.createGain();
+        master.gain.value = 0;
+        this.masterGain = master;
+
+        const preMix = ctx.createGain();
+        preMix.gain.value = 0.55;
+
+        const makeOsc = (type, gainVal) => {
+          const osc = ctx.createOscillator();
+          osc.type = type;
+          osc.frequency.value = 43;
+          const g = ctx.createGain();
+          g.gain.value = gainVal;
+          osc.connect(g);
+          g.connect(preMix);
+          osc.start();
+          return { osc, g };
+        };
+
+        this.oscSub = makeOsc('triangle', 0.55).osc;
+        this.oscFiring = makeOsc('sawtooth', 0.60).osc;
+        this.osc2nd = makeOsc('sawtooth', 0.30).osc;
+        const h3 = makeOsc('triangle', 0.08);
+        this.osc3rd = h3.osc;
+        this.gain3rd = h3.g;
+
+        // Subtle low-RPM idle cam lope
+        const lfo = ctx.createOscillator();
+        lfo.type = 'sine';
+        lfo.frequency.value = 7.5;
+        const lfoG = ctx.createGain();
+        lfoG.gain.value = 0;
+        lfo.connect(lfoG);
+        lfoG.connect(preMix.gain);
+        lfo.start();
+        this.lfoGain = lfoG;
+
+        // Intake/exhaust airflow noise layer
+        const bufLen = ctx.sampleRate * 2;
+        const noiseBuf = ctx.createBuffer(1, bufLen, ctx.sampleRate);
+        const data = noiseBuf.getChannelData(0);
+        let lastOut = 0;
+        for (let i = 0; i < bufLen; i++) {
+          const white = Math.random() * 2 - 1;
+          lastOut = (lastOut + 0.08 * white) / 1.08;
+          data[i] = lastOut * 3.2;
+        }
+        const noiseSrc = ctx.createBufferSource();
+        noiseSrc.buffer = noiseBuf;
+        noiseSrc.loop = true;
+        const nf = ctx.createBiquadFilter();
+        nf.type = 'bandpass';
+        nf.frequency.value = 500;
+        nf.Q.value = 1.1;
+        const ng = ctx.createGain();
+        ng.gain.value = 0.05;
+        noiseSrc.connect(nf);
+        nf.connect(ng);
+        ng.connect(lp);
+        noiseSrc.start();
+        this.noiseFilter = nf;
+        this.noiseGain = ng;
+
+        preMix.connect(shaper);
+        shaper.connect(lp);
+        lp.connect(master);
+        master.connect(ctx.destination);
+
+        this.started = true;
+      },
+
+      async setEnabled(on) {
+        this.enabled = on;
+        if (on) {
+          this.init();
+          if (this.ctx && this.ctx.state === 'suspended') {
+            try { await this.ctx.resume(); } catch {}
+          }
+        } else if (this.ctx && this.masterGain) {
+          this.masterGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.04);
+        }
+      },
+
+      update(rpm, throttle) {
+        if (!this.started || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        if (!this.enabled || rpm < 100) {
+          this.masterGain.gain.setTargetAtTime(0, now, 0.05);
+          return;
+        }
+
+        const rpmClamped = Math.max(400, Math.min(8500, rpm));
+        const rpmNorm = rpmClamped / 8000;
+        const thrNorm = Math.max(0, Math.min(1, throttle / 100));
+
+        // 4-stroke V8: 4 firing events per revolution -> rpm / 15 Hz
+        const firingHz = rpmClamped / 15;
+        const tau = 0.025;
+        this.oscSub.frequency.setTargetAtTime(firingHz * 0.5, now, tau);
+        this.oscFiring.frequency.setTargetAtTime(firingHz, now, tau);
+        this.osc2nd.frequency.setTargetAtTime(firingHz * 2.0, now, tau);
+        this.osc3rd.frequency.setTargetAtTime(firingHz * 3.0, now, tau);
+
+        // Bring in crisp upper exhaust harmonics as RPM rises
+        this.gain3rd.gain.setTargetAtTime(0.06 + rpmNorm * 0.24, now, tau);
+
+        // Idle cam lope fades out smoothly above 1300 RPM
+        const idleAmount = Math.max(0, 1 - (rpmClamped - 650) / 650);
+        this.lfoGain.gain.setTargetAtTime(idleAmount * 0.09, now, 0.05);
+
+        // Dynamic exhaust filter & intake roar
+        const cutoff = 160 + rpmNorm * 1900 + thrNorm * 950;
+        this.lpFilter.frequency.setTargetAtTime(cutoff, now, tau);
+        this.lpFilter.Q.setTargetAtTime(2.0 + thrNorm * 2.4, now, tau);
+
+        this.noiseFilter.frequency.setTargetAtTime(320 + rpmNorm * 1800, now, tau);
+        this.noiseGain.gain.setTargetAtTime(0.03 + rpmNorm * 0.12 + thrNorm * 0.14, now, tau);
+
+        // Subtle redline rev-limiter pulse above 7050 RPM
+        let limiterMod = 1.0;
+        if (rpmClamped >= 7050) {
+          limiterMod = (Math.floor(performance.now() / 55) % 2 === 0) ? 1.0 : 0.45;
+        }
+
+        const targetLevel = this.volume * (0.28 + rpmNorm * 0.44 + thrNorm * 0.20) * limiterMod;
+        this.masterGain.gain.setTargetAtTime(targetLevel, now, tau);
+      }
+    };
+
+    el('toggle-sound').addEventListener('change', (e) => {
+      engineAudio.setEnabled(e.target.checked);
+    });
+
+    el('rng-vol').addEventListener('input', () => {
+      const v = Number(el('rng-vol').value);
+      engineAudio.volume = v / 100;
+      el('lbl-sound-vol').textContent = `${v}%`;
+    });
+
+    // -------------------------------
     // RENDER LOOP (15 FPS)
     // -------------------------------
     let lastChartPush = 0;
@@ -920,8 +1119,10 @@
       const rpm = state.demoMode ? Number(el('rng-rpm').value) : state.lastRpm;
       const speed = state.demoMode ? Number(el('rng-speed').value) : state.lastSpeed;
       const gear = state.lastGear;
-      const throttle = state.lastThrottle;
+      const throttle = state.demoMode ? Math.min(100, Math.round((rpm / 8000) * 100)) : state.lastThrottle;
       const temp = state.demoMode ? Number(el('rng-temp').value) : (85 + Math.floor(throttle * 0.1));
+
+      engineAudio.update(rpm, throttle);
 
       if (state.demoMode && Date.now() - lastChartPush > 200) {
         lastChartPush = Date.now();
