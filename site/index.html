@@ -825,7 +825,7 @@
                   if (!state.demoMode) {
                     state.history.push({ rpm: parsed.rpm, speed: parsed.speed });
                     if (state.history.length > 300) state.history.shift();
-                    engineAudio.update(parsed.rpm, parsed.throttle);
+                    engineAudio.update(parsed.rpm, parsed.throttle, parsed.gear);
                   }
                 }
               } else if (state.rxBuffer.length > 500) {
@@ -929,7 +929,7 @@
     }
 
     // -------------------------------
-    // WEB AUDIO V8 ENGINE SYNTHESIZER
+    // WEB AUDIO BMW M5 TWIN-TURBO V8 SYNTHESIZER
     // -------------------------------
     const engineAudio = {
       enabled: false,
@@ -937,15 +937,29 @@
       ctx: null,
       started: false,
       masterGain: null,
+      preMix: null,
+      exhaustBus: null,
+      barkPeak: null,
       lpFilter: null,
-      oscSub: null,
-      oscFiring: null,
-      osc2nd: null,
-      osc3rd: null,
-      gain3rd: null,
+      oscCrank: null,
+      oscHalf: null,
+      oscMain: null,
+      oscBankB: null,
+      oscOrder6: null,
+      oscOrder8: null,
+      gainOrder6: null,
+      gainOrder8: null,
+      oscTurbo: null,
+      turboGain: null,
       noiseGain: null,
       noiseFilter: null,
+      noiseBuf: null,
       lfoGain: null,
+      prevRpm: 0,
+      prevThrottle: 0,
+      prevGear: 1,
+      lastPopMs: 0,
+      shiftDipUntil: 0,
 
       init() {
         if (this.started) return;
@@ -954,33 +968,70 @@
         const ctx = new AudioCtx();
         this.ctx = ctx;
 
-        // Soft-clipping saturation curve for warm exhaust harmonics
+        // Custom combustion-pulse PeriodicWave (rich low-mid punch, zero electronic fizz)
+        const numHarmonics = 18;
+        const real = new Float32Array(numHarmonics);
+        const imag = new Float32Array(numHarmonics);
+        for (let k = 1; k < numHarmonics; k++) {
+          imag[k] = Math.exp(-0.19 * k) / Math.pow(k, 0.52);
+          real[k] = 0.25 * imag[k] * (k % 2 === 0 ? -1 : 1);
+        }
+        const combWave = ctx.createPeriodicWave(real, imag, { disableNormalization: false });
+
+        // Warm asymmetric exhaust saturation
         const shaper = ctx.createWaveShaper();
         const n = 1024;
         const curve = new Float32Array(n);
         for (let i = 0; i < n; i++) {
           const x = (i * 2) / n - 1;
-          curve[i] = Math.tanh(x * 2.2);
+          curve[i] = Math.tanh(x * 2.5 + 0.14 * x * x);
         }
         shaper.curve = curve;
         shaper.oversample = '2x';
 
+        // Exhaust pipe resonances: deep 98Hz chest thump + tracking midrange bark
+        const chestPeak = ctx.createBiquadFilter();
+        chestPeak.type = 'peaking';
+        chestPeak.frequency.value = 98;
+        chestPeak.Q.value = 1.3;
+        chestPeak.gain.value = 8.0;
+
+        const barkPeak = ctx.createBiquadFilter();
+        barkPeak.type = 'peaking';
+        barkPeak.frequency.value = 280;
+        barkPeak.Q.value = 1.7;
+        barkPeak.gain.value = 5.5;
+        this.barkPeak = barkPeak;
+
         const lp = ctx.createBiquadFilter();
         lp.type = 'lowpass';
         lp.frequency.value = 260;
-        lp.Q.value = 2.4;
+        lp.Q.value = 1.6;
         this.lpFilter = lp;
+
+        const comp = ctx.createDynamicsCompressor();
+        comp.threshold.value = -12;
+        comp.knee.value = 10;
+        comp.ratio.value = 4;
+        comp.attack.value = 0.004;
+        comp.release.value = 0.12;
 
         const master = ctx.createGain();
         master.gain.value = 0;
         this.masterGain = master;
 
+        const exhaustBus = ctx.createGain();
+        exhaustBus.gain.value = 1.0;
+        this.exhaustBus = exhaustBus;
+
         const preMix = ctx.createGain();
         preMix.gain.value = 0.55;
+        this.preMix = preMix;
 
-        const makeOsc = (type, gainVal) => {
+        const makeOsc = (waveOrType, gainVal) => {
           const osc = ctx.createOscillator();
-          osc.type = type;
+          if (typeof waveOrType === 'string') osc.type = waveOrType;
+          else osc.setPeriodicWave(waveOrType);
           osc.frequency.value = 43;
           const g = ctx.createGain();
           g.gain.value = gainVal;
@@ -990,17 +1041,22 @@
           return { osc, g };
         };
 
-        this.oscSub = makeOsc('triangle', 0.55).osc;
-        this.oscFiring = makeOsc('sawtooth', 0.60).osc;
-        this.osc2nd = makeOsc('sawtooth', 0.30).osc;
-        const h3 = makeOsc('triangle', 0.08);
-        this.osc3rd = h3.osc;
-        this.gain3rd = h3.g;
+        // Cross-plane V8 orders (0.5x, 0.75x chop, 1.0x bank A, 1.012x bank B, 1.5x, 2.0x)
+        this.oscCrank = makeOsc(combWave, 0.50).osc;
+        this.oscHalf = makeOsc(combWave, 0.36).osc;
+        this.oscMain = makeOsc(combWave, 0.65).osc;
+        this.oscBankB = makeOsc(combWave, 0.42).osc;
+        const o6 = makeOsc(combWave, 0.26);
+        this.oscOrder6 = o6.osc;
+        this.gainOrder6 = o6.g;
+        const o8 = makeOsc('triangle', 0.10);
+        this.oscOrder8 = o8.osc;
+        this.gainOrder8 = o8.g;
 
-        // Subtle low-RPM idle cam lope
+        // Low-RPM V8 cam lope
         const lfo = ctx.createOscillator();
         lfo.type = 'sine';
-        lfo.frequency.value = 7.5;
+        lfo.frequency.value = 8.2;
         const lfoG = ctx.createGain();
         lfoG.gain.value = 0;
         lfo.connect(lfoG);
@@ -1008,7 +1064,7 @@
         lfo.start();
         this.lfoGain = lfoG;
 
-        // Intake/exhaust airflow noise layer
+        // Brown/pink noise buffer for exhaust air & overrun crackles
         const bufLen = ctx.sampleRate * 2;
         const noiseBuf = ctx.createBuffer(1, bufLen, ctx.sampleRate);
         const data = noiseBuf.getChannelData(0);
@@ -1016,30 +1072,82 @@
         for (let i = 0; i < bufLen; i++) {
           const white = Math.random() * 2 - 1;
           lastOut = (lastOut + 0.08 * white) / 1.08;
-          data[i] = lastOut * 3.2;
+          data[i] = lastOut * 3.4;
         }
+        this.noiseBuf = noiseBuf;
+
         const noiseSrc = ctx.createBufferSource();
         noiseSrc.buffer = noiseBuf;
         noiseSrc.loop = true;
         const nf = ctx.createBiquadFilter();
         nf.type = 'bandpass';
-        nf.frequency.value = 500;
-        nf.Q.value = 1.1;
+        nf.frequency.value = 420;
+        nf.Q.value = 1.0;
         const ng = ctx.createGain();
         ng.gain.value = 0.05;
         noiseSrc.connect(nf);
         nf.connect(ng);
-        ng.connect(lp);
+        ng.connect(exhaustBus);
         noiseSrc.start();
         this.noiseFilter = nf;
         this.noiseGain = ng;
 
+        // Twin-turbo spool whistle
+        const turboOsc = ctx.createOscillator();
+        turboOsc.type = 'sine';
+        turboOsc.frequency.value = 2400;
+        const turboG = ctx.createGain();
+        turboG.gain.value = 0;
+        turboOsc.connect(turboG);
+        turboG.connect(master);
+        turboOsc.start();
+        this.oscTurbo = turboOsc;
+        this.turboGain = turboG;
+
         preMix.connect(shaper);
-        shaper.connect(lp);
+        shaper.connect(exhaustBus);
+        exhaustBus.connect(chestPeak);
+        chestPeak.connect(barkPeak);
+        barkPeak.connect(lp);
         lp.connect(master);
-        master.connect(ctx.destination);
+        master.connect(comp);
+        comp.connect(ctx.destination);
 
         this.started = true;
+      },
+
+      triggerPop(intensity) {
+        if (!this.started || !this.ctx || !this.noiseBuf) return;
+        const ctx = this.ctx;
+        const t = ctx.currentTime;
+
+        // Low exhaust thump
+        const popOsc = ctx.createOscillator();
+        popOsc.type = 'triangle';
+        popOsc.frequency.setValueAtTime(145 + Math.random() * 55, t);
+        popOsc.frequency.exponentialRampToValueAtTime(48, t + 0.065);
+        const popG = ctx.createGain();
+        popG.gain.setValueAtTime(0.45 * intensity, t);
+        popG.gain.exponentialRampToValueAtTime(0.001, t + 0.075);
+        popOsc.connect(popG);
+        popG.connect(this.exhaustBus);
+        popOsc.start(t);
+        popOsc.stop(t + 0.08);
+
+        // Crackle burst
+        const src = ctx.createBufferSource();
+        src.buffer = this.noiseBuf;
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = 650 + Math.random() * 600;
+        bp.Q.value = 1.4;
+        const ng = ctx.createGain();
+        ng.gain.setValueAtTime(0.32 * intensity, t);
+        ng.gain.exponentialRampToValueAtTime(0.001, t + 0.055);
+        src.connect(bp);
+        bp.connect(ng);
+        ng.connect(this.exhaustBus);
+        src.start(t, Math.random() * 1.2, 0.06);
       },
 
       async setEnabled(on) {
@@ -1054,11 +1162,16 @@
         }
       },
 
-      update(rpm, throttle) {
+      update(rpm, throttle, gear = 1) {
         if (!this.started || !this.ctx) return;
         const now = this.ctx.currentTime;
+        const nowMs = performance.now();
+
         if (!this.enabled || rpm < 100) {
           this.masterGain.gain.setTargetAtTime(0, now, 0.05);
+          this.prevRpm = rpm;
+          this.prevThrottle = throttle;
+          this.prevGear = gear;
           return;
         }
 
@@ -1066,37 +1179,63 @@
         const rpmNorm = rpmClamped / 8000;
         const thrNorm = Math.max(0, Math.min(1, throttle / 100));
 
-        // 4-stroke V8: 4 firing events per revolution -> rpm / 15 Hz
+        // 4-stroke V8 firing rate: rpm / 15 Hz
         const firingHz = rpmClamped / 15;
-        const tau = 0.025;
-        this.oscSub.frequency.setTargetAtTime(firingHz * 0.5, now, tau);
-        this.oscFiring.frequency.setTargetAtTime(firingHz, now, tau);
-        this.osc2nd.frequency.setTargetAtTime(firingHz * 2.0, now, tau);
-        this.osc3rd.frequency.setTargetAtTime(firingHz * 3.0, now, tau);
+        const tau = 0.022;
+        this.oscCrank.frequency.setTargetAtTime(firingHz * 0.5, now, tau);
+        this.oscHalf.frequency.setTargetAtTime(firingHz * 0.75, now, tau);
+        this.oscMain.frequency.setTargetAtTime(firingHz, now, tau);
+        this.oscBankB.frequency.setTargetAtTime(firingHz * 1.012, now, tau);
+        this.oscOrder6.frequency.setTargetAtTime(firingHz * 1.5, now, tau);
+        this.oscOrder8.frequency.setTargetAtTime(firingHz * 2.0, now, tau);
 
-        // Bring in crisp upper exhaust harmonics as RPM rises
-        this.gain3rd.gain.setTargetAtTime(0.06 + rpmNorm * 0.24, now, tau);
+        this.gainOrder6.gain.setTargetAtTime(0.24 + rpmNorm * 0.22, now, tau);
+        this.gainOrder8.gain.setTargetAtTime(0.08 + rpmNorm * 0.24, now, tau);
 
-        // Idle cam lope fades out smoothly above 1300 RPM
+        // Low-RPM V8 cam lope
         const idleAmount = Math.max(0, 1 - (rpmClamped - 650) / 650);
-        this.lfoGain.gain.setTargetAtTime(idleAmount * 0.09, now, 0.05);
+        this.lfoGain.gain.setTargetAtTime(idleAmount * 0.11, now, 0.05);
 
-        // Dynamic exhaust filter & intake roar
-        const cutoff = 160 + rpmNorm * 1900 + thrNorm * 950;
-        this.lpFilter.frequency.setTargetAtTime(cutoff, now, tau);
-        this.lpFilter.Q.setTargetAtTime(2.0 + thrNorm * 2.4, now, tau);
+        // Exhaust formant & cutoff tracking
+        this.barkPeak.frequency.setTargetAtTime(240 + rpmNorm * 360, now, tau);
+        this.lpFilter.frequency.setTargetAtTime(200 + rpmNorm * 1450 + thrNorm * 650, now, tau);
+        this.lpFilter.Q.setTargetAtTime(1.5 + thrNorm * 1.6, now, tau);
 
-        this.noiseFilter.frequency.setTargetAtTime(320 + rpmNorm * 1800, now, tau);
-        this.noiseGain.gain.setTargetAtTime(0.03 + rpmNorm * 0.12 + thrNorm * 0.14, now, tau);
+        this.noiseFilter.frequency.setTargetAtTime(280 + rpmNorm * 1500, now, tau);
+        this.noiseGain.gain.setTargetAtTime(0.04 + rpmNorm * 0.10 + thrNorm * 0.12, now, tau);
 
-        // Subtle redline rev-limiter pulse above 7050 RPM
-        let limiterMod = 1.0;
-        if (rpmClamped >= 7050) {
-          limiterMod = (Math.floor(performance.now() / 55) % 2 === 0) ? 1.0 : 0.45;
+        // Twin-turbo spool whistle above 1800 RPM
+        const turboOn = Math.max(0, (rpmClamped - 1800) / 5400) * (0.3 + 0.7 * thrNorm);
+        this.oscTurbo.frequency.setTargetAtTime(2100 + rpmNorm * 3400, now, 0.05);
+        this.turboGain.gain.setTargetAtTime(turboOn * 0.022, now, 0.06);
+
+        // Upshift ignition-cut bark
+        if (gear > this.prevGear && rpmClamped > 2200) {
+          this.shiftDipUntil = nowMs + 65;
+          this.triggerPop(0.85);
         }
 
-        const targetLevel = this.volume * (0.28 + rpmNorm * 0.44 + thrNorm * 0.20) * limiterMod;
+        // Overrun exhaust pops & crackles when lifting off / decelerating from > 1900 RPM
+        const rpmDrop = this.prevRpm - rpm;
+        const thrDrop = this.prevThrottle - throttle;
+        if ((rpmDrop > 40 || thrDrop > 8) && rpmClamped > 1900 && (nowMs - this.lastPopMs) > (95 + Math.random() * 140)) {
+          this.lastPopMs = nowMs;
+          this.triggerPop(0.5 + 0.5 * rpmNorm);
+        }
+
+        let mod = 1.0;
+        if (nowMs < this.shiftDipUntil) {
+          mod = 0.35;
+        } else if (rpmClamped >= 7050) {
+          mod = (Math.floor(nowMs / 55) % 2 === 0) ? 1.0 : 0.42;
+        }
+
+        const targetLevel = this.volume * (0.34 + rpmNorm * 0.42 + thrNorm * 0.18) * mod;
         this.masterGain.gain.setTargetAtTime(targetLevel, now, tau);
+
+        this.prevRpm = rpm;
+        this.prevThrottle = throttle;
+        this.prevGear = gear;
       }
     };
 
@@ -1122,7 +1261,7 @@
       const throttle = state.demoMode ? Math.min(100, Math.round((rpm / 8000) * 100)) : state.lastThrottle;
       const temp = state.demoMode ? Number(el('rng-temp').value) : (85 + Math.floor(throttle * 0.1));
 
-      engineAudio.update(rpm, throttle);
+      engineAudio.update(rpm, throttle, gear);
 
       if (state.demoMode && Date.now() - lastChartPush > 200) {
         lastChartPush = Date.now();
