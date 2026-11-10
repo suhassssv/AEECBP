@@ -1,0 +1,1000 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vehicle Telemetry Dashboard</title>
+  <style>
+    :root {
+      --bg: #000000;
+      --sidebar-bg: #080d16;
+      --sidebar-border: #142236;
+      --card-bg: #080f1a;
+      --card-border: #16283f;
+      --accent: #38b6ff;
+      --text: #e0e8f5;
+      --muted: #7f97b4;
+      --ok-bg: rgba(25, 135, 84, 0.16);
+      --ok-border: rgba(56, 211, 153, 0.4);
+      --ok-text: #4ade80;
+      --err-bg: rgba(220, 53, 69, 0.16);
+      --err-border: rgba(248, 113, 113, 0.4);
+      --err-text: #f87171;
+      --info-bg: rgba(56, 182, 255, 0.12);
+      --info-border: rgba(56, 182, 255, 0.4);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      min-height: 100vh;
+      display: flex;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 300px;
+      flex-shrink: 0;
+      background: var(--sidebar-bg);
+      border-right: 1px solid var(--sidebar-border);
+      padding: 20px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .sidebar h2 {
+      margin: 0;
+      font-size: 1.05rem;
+      letter-spacing: 0.08em;
+      color: #ffffff;
+    }
+
+    .sidebar h3 {
+      margin: 4px 0 0;
+      font-size: 0.95rem;
+      color: var(--text);
+    }
+
+    .caption {
+      font-size: 0.8rem;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid var(--sidebar-border);
+      margin: 4px 0;
+      width: 100%;
+    }
+
+    .btn-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    button {
+      background: #0e1929;
+      color: var(--text);
+      border: 1px solid #223854;
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+    }
+
+    button:hover:not(:disabled) {
+      background: #14253d;
+      border-color: var(--accent);
+    }
+
+    button.primary {
+      background: #0d2b49;
+      border-color: #266eb5;
+      color: #ffffff;
+    }
+
+    button.primary:hover:not(:disabled) {
+      background: #133b63;
+      border-color: var(--accent);
+    }
+
+    button:disabled {
+      opacity: 0.42;
+      cursor: not-allowed;
+    }
+
+    .status-pill {
+      padding: 9px 12px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+
+    .status-pill.connected {
+      background: var(--ok-bg);
+      border: 1px solid var(--ok-border);
+      color: var(--ok-text);
+    }
+
+    .status-pill.disconnected {
+      background: var(--err-bg);
+      border: 1px solid var(--err-border);
+      color: var(--err-text);
+    }
+
+    .warn-box {
+      background: rgba(245, 158, 11, 0.14);
+      border: 1px solid rgba(251, 191, 36, 0.4);
+      color: #fcd34d;
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.88rem;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .toggle-row input {
+      accent-color: var(--accent);
+      width: 17px;
+      height: 17px;
+      cursor: pointer;
+    }
+
+    .slider-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .slider-item label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.82rem;
+      margin-bottom: 4px;
+      color: var(--text);
+    }
+
+    .slider-item input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    /* Main Content */
+    .main {
+      flex: 1;
+      padding: 14px 24px 28px;
+      max-width: 1360px;
+      margin: 0 auto;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .cluster-wrap {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .metric-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 12px 16px;
+    }
+
+    .metric-label {
+      font-size: 0.75rem;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+
+    .metric-value {
+      font-size: 1.65rem;
+      font-weight: 700;
+      color: var(--accent);
+      line-height: 1.15;
+    }
+
+    .cal-banner {
+      background: var(--info-bg);
+      border: 1px solid var(--info-border);
+      border-radius: 10px;
+      padding: 11px 14px;
+      font-size: 0.88rem;
+      color: #d7f0ff;
+    }
+
+    .adc-caption {
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    .adc-caption code {
+      background: #0a1424;
+      border: 1px solid #1a2d47;
+      padding: 1px 6px;
+      border-radius: 5px;
+      color: #7ccdff;
+    }
+
+    details.charts-box {
+      background: #04080f;
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 12px 16px;
+    }
+
+    details.charts-box summary {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: var(--text);
+      outline: none;
+    }
+
+    .charts-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 12px;
+    }
+
+    .chart-panel {
+      background: #070d17;
+      border: 1px solid #132238;
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+
+    .chart-title {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    canvas {
+      width: 100%;
+      height: 220px;
+      display: block;
+    }
+
+    @media (max-width: 980px) {
+      body { flex-direction: column; }
+      .sidebar {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--sidebar-border);
+      }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .charts-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <h2>SYSTEM CONNECTION</h2>
+    <div id="serial-unsupported" class="warn-box" style="display:none;">
+      Web Serial requires Chrome or Edge (desktop) over HTTPS or localhost. Demo sliders remain available below.
+    </div>
+    <div class="btn-row">
+      <button id="btn-connect" class="primary">CONNECT</button>
+      <button id="btn-disconnect" disabled>DISCONNECT</button>
+    </div>
+    <div id="conn-pill" class="status-pill disconnected">● DISCONNECTED</div>
+    <div id="conn-err" class="warn-box" style="display:none;"></div>
+
+    <hr />
+    <h3>🎛️ Knob Calibration</h3>
+    <div class="caption">For knobs with limited travel: Start, sweep full min → max, then Save.</div>
+    <div class="btn-row">
+      <button id="btn-cal-start" disabled>🎯 Start</button>
+      <button id="btn-cal-save" disabled>✅ Save</button>
+    </div>
+    <button id="btn-cal-reset" disabled>↺ Reset Default Range</button>
+
+    <hr />
+    <h3>🕹️ Simulation &amp; Controls</h3>
+    <label class="toggle-row">
+      <span>Enable Manual / Demo Sliders</span>
+      <input type="checkbox" id="toggle-demo" />
+    </label>
+
+    <div id="demo-controls" class="slider-group" style="display:none;">
+      <div class="slider-item">
+        <label><span>RPM</span><span id="lbl-demo-rpm">0</span></label>
+        <input type="range" id="rng-rpm" min="0" max="8000" step="50" value="0" />
+      </div>
+      <div class="slider-item">
+        <label><span>Speed (KM/H)</span><span id="lbl-demo-speed">0</span></label>
+        <input type="range" id="rng-speed" min="0" max="250" step="1" value="0" />
+      </div>
+      <div class="slider-item">
+        <label><span>Fuel Level (%)</span><span id="lbl-demo-fuel">75</span></label>
+        <input type="range" id="rng-fuel" min="0" max="100" step="1" value="75" />
+      </div>
+      <div class="slider-item">
+        <label><span>Coolant Temp (°C)</span><span id="lbl-demo-temp">85</span></label>
+        <input type="range" id="rng-temp" min="40" max="120" step="1" value="85" />
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="cluster-wrap" id="cluster-container"></div>
+
+    <section class="metrics">
+      <div class="metric-card">
+        <div class="metric-label">VEHICLE SPEED</div>
+        <div class="metric-value" id="m-speed">0 KM/H</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">ENGINE RPM</div>
+        <div class="metric-value" id="m-rpm">0 RPM</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">GEAR</div>
+        <div class="metric-value" id="m-gear">1</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">THROTTLE</div>
+        <div class="metric-value" id="m-throttle">0 %</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">SYSTEM STATUS</div>
+        <div class="metric-value" id="m-status">WAITING LINK</div>
+      </div>
+    </section>
+
+    <div id="cal-banner" class="cal-banner" style="display:none;"></div>
+    <div id="adc-caption" class="adc-caption" style="display:none;"></div>
+
+    <details class="charts-box" open>
+      <summary>📈 Telemetry Log &amp; Graphs</summary>
+      <div id="charts-empty" class="caption" style="margin-top:10px;">
+        Live graphs will plot once telemetry packets arrive.
+      </div>
+      <div id="charts-grid" class="charts-grid" style="display:none;">
+        <div class="chart-panel">
+          <div class="chart-title">Engine RPM</div>
+          <canvas id="cv-rpm" width="600" height="220"></canvas>
+        </div>
+        <div class="chart-panel">
+          <div class="chart-title">Vehicle speed (km/h)</div>
+          <canvas id="cv-speed" width="600" height="220"></canvas>
+        </div>
+      </div>
+    </details>
+  </main>
+
+  <script>
+    // -------------------------------
+    // SVG INSTRUMENT CLUSTER BUILDER
+    // -------------------------------
+    function buildClusterSvg() {
+      const w = 1240, h = 500;
+      const cFuel = [105, 325, 68];
+      const cSpeed = [370, 245, 175];
+      const cTach = [870, 245, 175];
+      const cTemp = [1135, 325, 68];
+
+      const rad = (deg) => (deg * Math.PI) / 180;
+      const parts = [];
+      parts.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" style="width:100%;max-width:${w}px;height:auto;display:block;margin:auto;background:#000000;user-select:none;">`);
+      parts.push(`
+      <defs>
+        <filter id="neon-glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="3.5" result="blur1"/>
+          <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur2"/>
+          <feMerge><feMergeNode in="blur2"/><feMergeNode in="blur1"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="needle-glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur1"/>
+          <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur2"/>
+          <feMerge><feMergeNode in="blur2"/><feMergeNode in="blur1"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="red-glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <radialGradient id="dial-grad" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#020408"/>
+          <stop offset="65%" stop-color="#060c16"/>
+          <stop offset="85%" stop-color="#0c1828"/>
+          <stop offset="100%" stop-color="#12243a"/>
+        </radialGradient>
+        <linearGradient id="bezel-metal" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#4e5b6e"/>
+          <stop offset="35%" stop-color="#222b37"/>
+          <stop offset="70%" stop-color="#111620"/>
+          <stop offset="100%" stop-color="#2a3646"/>
+        </linearGradient>
+        <linearGradient id="hood-cowl" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#6f819b" stop-opacity="0.85"/>
+          <stop offset="45%" stop-color="#2b3543" stop-opacity="0.35"/>
+          <stop offset="100%" stop-color="#0a0e14" stop-opacity="0"/>
+        </linearGradient>
+        <radialGradient id="cluster-bg" cx="50%" cy="25%" r="65%">
+          <stop offset="0%" stop-color="#121824"/>
+          <stop offset="50%" stop-color="#080c13"/>
+          <stop offset="100%" stop-color="#010204"/>
+        </radialGradient>
+        <linearGradient id="needle-blue" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#e2f7ff"/>
+          <stop offset="30%" stop-color="#38b6ff"/>
+          <stop offset="100%" stop-color="#0052e0"/>
+        </linearGradient>
+        <radialGradient id="hub-cap" cx="40%" cy="40%" r="60%">
+          <stop offset="0%" stop-color="#4d5c70"/>
+          <stop offset="60%" stop-color="#1a2330"/>
+          <stop offset="100%" stop-color="#080c12"/>
+        </radialGradient>
+        <radialGradient id="hub-core" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#c7f6ff"/>
+          <stop offset="40%" stop-color="#2eb9ff"/>
+          <stop offset="100%" stop-color="#0044cc"/>
+        </radialGradient>
+      </defs>`);
+
+      parts.push(`
+        <path d="M 40,445 C 65,210 220,50 620,35 C 1020,50 1175,210 1200,445 C 960,460 280,460 40,445 Z" fill="url(#cluster-bg)" stroke="#1a2638" stroke-width="3"/>
+        <path d="M 68,425 C 90,225 235,70 620,55 C 1005,70 1150,225 1172,425" fill="none" stroke="#3d516c" stroke-width="2" opacity="0.6"/>
+        <path d="M 50,448 L 1190,448" stroke="#1c2c40" stroke-width="4"/>
+        <path d="M 110,446 L 1130,446" stroke="#364c67" stroke-width="1.5" opacity="0.8"/>
+      `);
+
+      function drawDialBase(cx, cy, r, hasCowl) {
+        let s = `<circle cx="${cx}" cy="${cy}" r="${r+14}" fill="url(#bezel-metal)" stroke="#090d14" stroke-width="2"/>` +
+                `<circle cx="${cx}" cy="${cy}" r="${r+10}" fill="#080c14" stroke="#253549" stroke-width="1.5"/>` +
+                `<circle cx="${cx}" cy="${cy}" r="${r}" fill="url(#dial-grad)" stroke="#0e1724" stroke-width="1"/>` +
+                `<circle cx="${cx}" cy="${cy}" r="${r-2}" fill="none" stroke="#2b9aff" stroke-width="2.5" opacity="0.85" filter="url(#neon-glow)"/>` +
+                `<circle cx="${cx}" cy="${cy}" r="${r-2}" fill="none" stroke="#66c4ff" stroke-width="1" opacity="0.9"/>`;
+        if (hasCowl) {
+          s += `<path d="M ${cx-r-8},${cy-20} A ${r+10} ${r+10} 0 0 1 ${cx+r+8},${cy-20} C ${cx+r-20},${cy-70} ${cx-r+20},${cy-70} ${cx-r-8},${cy-20} Z" fill="url(#hood-cowl)"/>` +
+               `<path d="M ${cx-r-4},${cy-25} A ${r+6} ${r+6} 0 0 1 ${cx+r+4},${cy-25}" fill="none" stroke="#5d728f" stroke-width="2" opacity="0.5"/>`;
+        }
+        return s;
+      }
+
+      // Fuel Dial
+      const [fx, fy, fr] = cFuel;
+      parts.push(drawDialBase(fx, fy, fr, false));
+      for (let i = 0; i < 9; i++) {
+        const a = rad(-60 + i * 15);
+        const r1 = (i % 2 === 0) ? fr - 14 : fr - 10;
+        const r2 = fr - 4;
+        const sw = (i % 4 === 0) ? 2.5 : 1.5;
+        parts.push(`<line x1="${(fx+r1*Math.sin(a)).toFixed(1)}" y1="${(fy-r1*Math.cos(a)).toFixed(1)}" x2="${(fx+r2*Math.sin(a)).toFixed(1)}" y2="${(fy-r2*Math.cos(a)).toFixed(1)}" stroke="#38b6ff" stroke-width="${sw}" filter="url(#neon-glow)"/>`);
+      }
+      parts.push(`<text x="${fx-32}" y="${fy-18}" fill="#8cb9e6" font-size="12" font-weight="bold" text-anchor="middle">E</text>`);
+      parts.push(`<text x="${fx+32}" y="${fy-18}" fill="#8cb9e6" font-size="12" font-weight="bold" text-anchor="middle">F</text>`);
+      parts.push(`
+        <g transform="translate(${fx-10}, ${fy+25}) scale(0.9)" filter="url(#neon-glow)">
+          <path d="M 3,18 L 3,5 C 3,3.5 4,2.5 5.5,2.5 L 12.5,2.5 C 14,2.5 15,3.5 15,5 L 15,18 Z" fill="none" stroke="#38b6ff" stroke-width="1.6"/>
+          <rect x="5.5" y="5" width="7" height="5" fill="#38b6ff" opacity="0.6"/>
+          <path d="M 15,7 L 17,7 C 18,7 19,8 19,9 L 19,15 C 19,16 18,17 17.5,17 L 17.5,19" fill="none" stroke="#38b6ff" stroke-width="1.4"/>
+          <circle cx="17.5" cy="6" r="1.2" fill="#38b6ff"/>
+        </g>
+        <g id="needle-fuel" transform="rotate(22.5, ${fx}, ${fy})">
+          <polygon points="${fx-3},${fy+5} ${fx-1},${fy-fr+12} ${fx},${fy-fr+8} ${fx+1},${fy-fr+12} ${fx+3},${fy+5}" fill="url(#needle-blue)" filter="url(#needle-glow)"/>
+          <line x1="${fx}" y1="${fy}" x2="${fx}" y2="${fy-fr+10}" stroke="#ffffff" stroke-width="1" opacity="0.9"/>
+        </g>
+        <circle cx="${fx}" cy="${fy}" r="11" fill="url(#hub-cap)" stroke="#0a0f17" stroke-width="1.5"/>
+        <circle cx="${fx}" cy="${fy}" r="5" fill="url(#hub-core)" filter="url(#neon-glow)"/>
+      `);
+
+      // Speedometer
+      const [sx, sy, sr] = cSpeed;
+      parts.push(drawDialBase(sx, sy, sr, true));
+      for (let i = 0; i < 105; i++) {
+        const a = rad(-130 + (i / 104) * 260);
+        parts.push(`<line x1="${(sx+(sr-7)*Math.sin(a)).toFixed(1)}" y1="${(sy-(sr-7)*Math.cos(a)).toFixed(1)}" x2="${(sx+(sr-3)*Math.sin(a)).toFixed(1)}" y2="${(sy-(sr-3)*Math.cos(a)).toFixed(1)}" stroke="#2a90ff" stroke-width="1.2" opacity="0.75"/>`);
+      }
+      for (let i = 0; i <= 44; i++) {
+        const spd = i * 5;
+        const a = rad(-130 + (spd / 220) * 260);
+        const isMajor = (spd % 20 === 0);
+        const isMid = (spd % 10 === 0 && !isMajor);
+        const r1 = isMajor ? sr - 28 : (isMid ? sr - 22 : sr - 18);
+        const r2 = sr - 12;
+        const sw = isMajor ? 2.8 : (isMid ? 1.8 : 1.2);
+        const col = isMajor ? "#42d9ff" : (isMid ? "#2a8bf2" : "#1f6ebd");
+        const gl = isMajor ? 'filter="url(#neon-glow)"' : '';
+        parts.push(`<line x1="${(sx+r1*Math.sin(a)).toFixed(1)}" y1="${(sy-r1*Math.cos(a)).toFixed(1)}" x2="${(sx+r2*Math.sin(a)).toFixed(1)}" y2="${(sy-r2*Math.cos(a)).toFixed(1)}" stroke="${col}" stroke-width="${sw}" ${gl}/>`);
+        if (isMajor) {
+          const rt = sr - 46;
+          parts.push(`<text x="${(sx+rt*Math.sin(a)).toFixed(1)}" y="${(sy-rt*Math.cos(a)+5).toFixed(1)}" fill="#ffffff" font-size="16" font-weight="700" text-anchor="middle" filter="drop-shadow(0 0 2px #0088ff)">${spd}</text>`);
+        }
+      }
+      parts.push(`
+        <g id="icon-park" transform="translate(${sx}, ${sy+90})" filter="url(#neon-glow)">
+          <circle id="park-c" cx="0" cy="0" r="16" fill="none" stroke="#38b6ff" stroke-width="2"/>
+          <path id="park-p1" d="M -21,-7 C -23,-2 -23,2 -21,7" fill="none" stroke="#38b6ff" stroke-width="2.2" stroke-linecap="round"/>
+          <path id="park-p2" d="M 21,-7 C 23,-2 23,2 21,7" fill="none" stroke="#38b6ff" stroke-width="2.2" stroke-linecap="round"/>
+          <text id="park-t" x="0" y="5.5" fill="#38b6ff" font-size="14" font-weight="900" text-anchor="middle">P</text>
+        </g>
+        <g id="needle-speed" transform="rotate(-130, ${sx}, ${sy})">
+          <polygon points="${sx-5},${sy+14} ${sx-1.5},${sy-sr+22} ${sx},${sy-sr+16} ${sx+1.5},${sy-sr+22} ${sx+5},${sy+14}" fill="url(#needle-blue)" filter="url(#needle-glow)"/>
+          <line x1="${sx}" y1="${sy}" x2="${sx}" y2="${sy-sr+18}" stroke="#ffffff" stroke-width="1.4" opacity="0.95"/>
+        </g>
+        <circle cx="${sx}" cy="${sy}" r="22" fill="url(#hub-cap)" stroke="#090d14" stroke-width="2"/>
+        <circle cx="${sx}" cy="${sy}" r="11" fill="url(#hub-core)" filter="url(#needle-glow)"/>
+      `);
+
+      // Center MID
+      parts.push(`
+        <path d="M 525,120 L 715,120 L 735,390 L 505,390 Z" fill="#060a12" stroke="#162335" stroke-width="1.5" opacity="0.9"/>
+        <path d="M 535,122 L 705,122" stroke="#2a8fff" stroke-width="2" filter="url(#neon-glow)"/>
+        <path d="M 520,388 L 720,388" stroke="#1a5599" stroke-width="1.5"/>
+        <g transform="translate(545, 150)" opacity="0.25"><polygon points="0,10 16,0 16,6 30,6 30,14 16,14 16,20" fill="#2bd9ff"/></g>
+        <g transform="translate(665, 150)" opacity="0.25"><polygon points="30,10 14,0 14,6 0,6 0,14 14,14 14,20" fill="#2bd9ff"/></g>
+        <g transform="translate(620, 235)">
+          <text x="0" y="0" fill="#8cb9e6" font-size="13" font-weight="600" letter-spacing="2" text-anchor="middle">SPEED</text>
+          <text id="mid-speed" x="0" y="38" fill="#ffffff" font-size="38" font-weight="900" text-anchor="middle" filter="drop-shadow(0 0 6px #0099ff)">0</text>
+          <text x="0" y="58" fill="#42d9ff" font-size="12" font-weight="700" letter-spacing="1" text-anchor="middle">KM / H</text>
+        </g>
+        <g transform="translate(620, 395)">
+          <rect x="-65" y="-14" width="130" height="28" rx="4" fill="#040810" stroke="#1f4168" stroke-width="1.5"/>
+          <text x="0" y="6" fill="#42d9ff" font-family="'Courier New', monospace" font-size="17" font-weight="900" letter-spacing="4" text-anchor="middle" filter="url(#neon-glow)">165376</text>
+        </g>
+      `);
+
+      // Tachometer
+      const [tx, ty, tr] = cTach;
+      parts.push(drawDialBase(tx, ty, tr, true));
+      for (let i = 0; i < 105; i++) {
+        const a = rad(-130 + (i / 104) * 260);
+        const col = i >= 78 ? "#ff4d4d" : "#2a90ff";
+        parts.push(`<line x1="${(tx+(tr-7)*Math.sin(a)).toFixed(1)}" y1="${(ty-(tr-7)*Math.cos(a)).toFixed(1)}" x2="${(tx+(tr-3)*Math.sin(a)).toFixed(1)}" y2="${(ty-(tr-3)*Math.cos(a)).toFixed(1)}" stroke="${col}" stroke-width="1.2" opacity="0.8"/>`);
+      }
+      const px1 = tx + (tr-22)*Math.sin(rad(65)), py1 = ty - (tr-22)*Math.cos(rad(65));
+      const px2 = tx + (tr-22)*Math.sin(rad(130)), py2 = ty - (tr-22)*Math.cos(rad(130));
+      parts.push(`<path d="M ${px1.toFixed(1)},${py1.toFixed(1)} A ${tr-22} ${tr-22} 0 0 1 ${px2.toFixed(1)},${py2.toFixed(1)}" fill="none" stroke="#ff3838" stroke-width="6" opacity="0.85" filter="url(#red-glow)"/>`);
+      for (let i = 0; i <= 40; i++) {
+        const rv = i * 0.2;
+        const a = rad(-130 + (rv / 8) * 260);
+        const isMajor = (i % 5 === 0);
+        const isRed = rv >= 6.0;
+        const r1 = isMajor ? tr - 28 : tr - 20;
+        const r2 = tr - 12;
+        const sw = isMajor ? 2.8 : 1.4;
+        const col = isRed ? (isMajor ? "#ff4444" : "#e63333") : (isMajor ? "#42d9ff" : "#2a8bf2");
+        const gl = isMajor ? (isRed ? 'filter="url(#red-glow)"' : 'filter="url(#neon-glow)"') : '';
+        parts.push(`<line x1="${(tx+r1*Math.sin(a)).toFixed(1)}" y1="${(ty-r1*Math.cos(a)).toFixed(1)}" x2="${(tx+r2*Math.sin(a)).toFixed(1)}" y2="${(ty-r2*Math.cos(a)).toFixed(1)}" stroke="${col}" stroke-width="${sw}" ${gl}/>`);
+        if (isMajor) {
+          const num = Math.round(rv);
+          const rt = tr - 46;
+          const nc = num >= 6 ? "#ff4444" : "#ffffff";
+          const tg = num >= 6 ? 'filter="drop-shadow(0 0 3px #ff2222)"' : 'filter="drop-shadow(0 0 2px #0088ff)"';
+          parts.push(`<text x="${(tx+rt*Math.sin(a)).toFixed(1)}" y="${(ty-rt*Math.cos(a)+5).toFixed(1)}" fill="${nc}" font-size="17" font-weight="700" text-anchor="middle" ${tg}>${num}</text>`);
+        }
+      }
+      parts.push(`
+        <g id="icon-warn" transform="translate(${tx}, ${ty+90})" filter="url(#neon-glow)">
+          <circle id="warn-c" cx="0" cy="0" r="16" fill="none" stroke="#38b6ff" stroke-width="2"/>
+          <path id="warn-p1" d="M -21,-7 C -23,-2 -23,2 -21,7" fill="none" stroke="#38b6ff" stroke-width="2.2" stroke-linecap="round"/>
+          <path id="warn-p2" d="M 21,-7 C 23,-2 23,2 21,7" fill="none" stroke="#38b6ff" stroke-width="2.2" stroke-linecap="round"/>
+          <text id="warn-t" x="0" y="5.5" fill="#38b6ff" font-size="15" font-weight="900" text-anchor="middle">!</text>
+        </g>
+        <g id="needle-tach" transform="rotate(-130, ${tx}, ${ty})">
+          <polygon points="${tx-5},${ty+14} ${tx-1.5},${ty-tr+22} ${tx},${ty-tr+16} ${tx+1.5},${ty-tr+22} ${tx+5},${ty+14}" fill="url(#needle-blue)" filter="url(#needle-glow)"/>
+          <line x1="${tx}" y1="${ty}" x2="${tx}" y2="${ty-tr+18}" stroke="#ffffff" stroke-width="1.4" opacity="0.95"/>
+        </g>
+        <circle cx="${tx}" cy="${ty}" r="22" fill="url(#hub-cap)" stroke="#090d14" stroke-width="2"/>
+        <circle cx="${tx}" cy="${ty}" r="11" fill="url(#hub-core)" filter="url(#needle-glow)"/>
+      `);
+
+      // Temp Dial
+      const [ex, ey, er] = cTemp;
+      parts.push(drawDialBase(ex, ey, er, false));
+      for (let i = 0; i < 9; i++) {
+        const a = rad(-60 + i * 15);
+        const r1 = (i % 2 === 0) ? er - 14 : er - 10;
+        const r2 = er - 4;
+        const col = i >= 7 ? "#ff4444" : "#38b6ff";
+        const sw = (i % 4 === 0) ? 2.5 : 1.5;
+        parts.push(`<line x1="${(ex+r1*Math.sin(a)).toFixed(1)}" y1="${(ey-r1*Math.cos(a)).toFixed(1)}" x2="${(ex+r2*Math.sin(a)).toFixed(1)}" y2="${(ey-r2*Math.cos(a)).toFixed(1)}" stroke="${col}" stroke-width="${sw}" filter="url(#neon-glow)"/>`);
+      }
+      parts.push(`<text x="${ex-32}" y="${ey-18}" fill="#8cb9e6" font-size="12" font-weight="bold" text-anchor="middle">C</text>`);
+      parts.push(`<text x="${ex+32}" y="${ey-18}" fill="#ff6b6b" font-size="12" font-weight="bold" text-anchor="middle">H</text>`);
+      parts.push(`
+        <g transform="translate(${ex}, ${ey+25})" filter="url(#neon-glow)">
+          <rect x="-2" y="-12" width="4" height="12" rx="2" fill="none" stroke="#38b6ff" stroke-width="1.4"/>
+          <circle cx="0" cy="2" r="4.5" fill="#38b6ff" stroke="#38b6ff" stroke-width="1"/>
+          <line x1="2" y1="-9" x2="5" y2="-9" stroke="#38b6ff" stroke-width="1.2"/>
+          <line x1="2" y1="-5" x2="5" y2="-5" stroke="#38b6ff" stroke-width="1.2"/>
+          <path d="M -10,8 Q -5,6 0,8 Q 5,10 10,8" fill="none" stroke="#38b6ff" stroke-width="1.4"/>
+          <path d="M -10,12 Q -5,10 0,12 Q 5,14 10,12" fill="none" stroke="#38b6ff" stroke-width="1.4"/>
+        </g>
+        <g id="needle-temp" transform="rotate(5.6, ${ex}, ${ey})">
+          <polygon points="${ex-3},${ey+5} ${ex-1},${ey-er+12} ${ex},${ey-er+8} ${ex+1},${ey-er+12} ${ex+3},${ey+5}" fill="url(#needle-blue)" filter="url(#needle-glow)"/>
+          <line x1="${ex}" y1="${ey}" x2="${ex}" y2="${ey-er+10}" stroke="#ffffff" stroke-width="1" opacity="0.9"/>
+        </g>
+        <circle cx="${ex}" cy="${ey}" r="11" fill="url(#hub-cap)" stroke="#0a0f17" stroke-width="1.5"/>
+        <circle cx="${ex}" cy="${ey}" r="5" fill="url(#hub-core)" filter="url(#neon-glow)"/>
+      `);
+
+      parts.push('</svg>');
+      return parts.join('');
+    }
+
+    document.getElementById('cluster-container').innerHTML = buildClusterSvg();
+
+    // -------------------------------
+    // STATE & DOM REFERENCES
+    // -------------------------------
+    const state = {
+      connected: false,
+      port: null,
+      reader: null,
+      writer: null,
+      readLoopDone: null,
+      rxBuffer: '',
+      lastRpm: 0,
+      lastSpeed: 0,
+      lastGear: 1,
+      lastThrottle: 0,
+      lastRxMs: 0,
+      lastRaw: null,
+      calActive: false,
+      calMin: 6,
+      calMax: 1017,
+      demoMode: false,
+      history: [] // { rpm, speed }
+    };
+
+    const el = (id) => document.getElementById(id);
+    const needleSpeed = el('needle-speed');
+    const needleTach = el('needle-tach');
+    const needleFuel = el('needle-fuel');
+    const needleTemp = el('needle-temp');
+    const midSpeed = el('mid-speed');
+
+    if (!('serial' in navigator)) {
+      el('serial-unsupported').style.display = 'block';
+      el('btn-connect').disabled = true;
+    }
+
+    // -------------------------------
+    // TELEMETRY PARSER
+    // -------------------------------
+    function parseTelemetryLine(rawLine) {
+      const line = rawLine.trim();
+      if (!line) return null;
+      const parts = line.split(',').map(s => s.trim()).filter(Boolean);
+
+      let rpm = null, speed = null, gear = state.lastGear, throttle = state.lastThrottle;
+      const meta = {};
+
+      if (parts.some(p => p.includes(':'))) {
+        const kv = {};
+        for (const p of parts) {
+          const idx = p.indexOf(':');
+          if (idx === -1) continue;
+          const k = p.slice(0, idx).trim().toLowerCase();
+          const v = Number(p.slice(idx + 1).trim());
+          if (!Number.isNaN(v)) kv[k] = v;
+        }
+        if (kv.rpm === undefined) return null;
+        rpm = Math.round(kv.rpm);
+        if (kv.speed_x20 !== undefined) speed = Math.round(kv.speed_x20 / 20);
+        else if (kv.speed !== undefined) speed = Math.round(kv.speed);
+        else return null;
+
+        if (kv.gear_x500 !== undefined) gear = Math.round(kv.gear_x500 / 500);
+        else if (kv.gear !== undefined) gear = Math.round(kv.gear);
+
+        if (kv.throttle !== undefined) throttle = Math.round(kv.throttle);
+        else if (kv.thr !== undefined) throttle = Math.round(kv.thr);
+
+        for (const mk of ['raw', 'cal', 'adcmin', 'adcmax']) {
+          if (kv[mk] !== undefined) meta[mk] = Math.round(kv[mk]);
+        }
+      } else if (parts.length === 5) {
+        const nums = parts.map(Number);
+        if (nums.some(Number.isNaN)) return null;
+        rpm = Math.round(nums[1]);
+        speed = Math.round(nums[2]);
+        gear = Math.round(nums[3]);
+        throttle = Math.round(nums[4]);
+      } else {
+        return null;
+      }
+
+      if (rpm < 0 || rpm > 9000 || speed < 0 || speed > 400 || gear < 0 || gear > 8) return null;
+      throttle = Math.max(0, Math.min(100, throttle));
+      return { rpm, speed, gear, throttle, meta };
+    }
+
+    // -------------------------------
+    // WEB SERIAL CONNECTION & COMMANDS
+    // -------------------------------
+    async function sendSerialCmd(cmd) {
+      if (!state.writer) return;
+      try {
+        const data = new TextEncoder().encode(cmd + '\n');
+        await state.writer.write(data);
+      } catch (err) {
+        showConnErr('Serial write error: ' + err.message);
+      }
+    }
+
+    function showConnErr(msg) {
+      const box = el('conn-err');
+      if (msg) {
+        box.textContent = msg;
+        box.style.display = 'block';
+      } else {
+        box.style.display = 'none';
+      }
+    }
+
+    function syncConnectionUi() {
+      const c = state.connected;
+      el('btn-connect').disabled = c || !('serial' in navigator);
+      el('btn-disconnect').disabled = !c;
+      el('btn-cal-start').disabled = !c;
+      el('btn-cal-save').disabled = !c;
+      el('btn-cal-reset').disabled = !c;
+      const pill = el('conn-pill');
+      pill.textContent = c ? '● CONNECTED' : '● DISCONNECTED';
+      pill.className = 'status-pill ' + (c ? 'connected' : 'disconnected');
+    }
+
+    async function connectSerial() {
+      showConnErr('');
+      try {
+        const port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+        state.port = port;
+        state.connected = true;
+        state.rxBuffer = '';
+        state.history = [];
+        state.lastRxMs = 0;
+        state.writer = port.writable ? port.writable.getWriter() : null;
+        syncConnectionUi();
+
+        const decoder = new TextDecoderStream();
+        const pipeClosed = port.readable.pipeTo(decoder.writable).catch(() => {});
+        const reader = decoder.readable.getReader();
+        state.reader = reader;
+
+        state.readLoopDone = (async () => {
+          try {
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              if (!value) continue;
+              state.rxBuffer += value;
+              if (state.rxBuffer.includes('\n')) {
+                const lines = state.rxBuffer.split('\n');
+                state.rxBuffer = lines.pop().slice(-200);
+                for (const line of lines) {
+                  const parsed = parseTelemetryLine(line);
+                  if (!parsed) continue;
+                  state.lastRpm = parsed.rpm;
+                  state.lastSpeed = parsed.speed;
+                  state.lastGear = parsed.gear;
+                  state.lastThrottle = parsed.throttle;
+                  state.lastRxMs = Date.now();
+                  if (parsed.meta.raw !== undefined) state.lastRaw = parsed.meta.raw;
+                  if (parsed.meta.cal !== undefined) state.calActive = (parsed.meta.cal === 1);
+                  if (parsed.meta.adcmin !== undefined) state.calMin = parsed.meta.adcmin;
+                  if (parsed.meta.adcmax !== undefined) state.calMax = parsed.meta.adcmax;
+
+                  if (!state.demoMode) {
+                    state.history.push({ rpm: parsed.rpm, speed: parsed.speed });
+                    if (state.history.length > 300) state.history.shift();
+                  }
+                }
+              } else if (state.rxBuffer.length > 500) {
+                state.rxBuffer = '';
+              }
+            }
+          } catch (err) {
+            if (state.connected) showConnErr('Serial read error: ' + err.message);
+          } finally {
+            await pipeClosed;
+          }
+        })();
+      } catch (err) {
+        if (err.name !== 'NotFoundError') {
+          showConnErr(err.message);
+        }
+      }
+    }
+
+    async function disconnectSerial() {
+      state.connected = false;
+      try { if (state.reader) { await state.reader.cancel(); state.reader.releaseLock(); } } catch {}
+      try { if (state.readLoopDone) await state.readLoopDone; } catch {}
+      try { if (state.writer) { state.writer.releaseLock(); } } catch {}
+      try { if (state.port) await state.port.close(); } catch {}
+      state.port = null;
+      state.reader = null;
+      state.writer = null;
+      state.calActive = false;
+      syncConnectionUi();
+    }
+
+    el('btn-connect').addEventListener('click', connectSerial);
+    el('btn-disconnect').addEventListener('click', disconnectSerial);
+    el('btn-cal-start').addEventListener('click', () => { state.calActive = true; sendSerialCmd('CAL_START'); });
+    el('btn-cal-save').addEventListener('click', () => { state.calActive = false; sendSerialCmd('CAL_SAVE'); });
+    el('btn-cal-reset').addEventListener('click', () => { state.calActive = false; sendSerialCmd('CAL_RESET'); });
+
+    el('toggle-demo').addEventListener('change', (e) => {
+      state.demoMode = e.target.checked;
+      state.history = [];
+      el('demo-controls').style.display = state.demoMode ? 'flex' : 'none';
+      if (state.demoMode) {
+        el('rng-rpm').value = state.lastRpm;
+        el('rng-speed').value = state.lastSpeed;
+        el('lbl-demo-rpm').textContent = state.lastRpm;
+        el('lbl-demo-speed').textContent = state.lastSpeed;
+      }
+    });
+
+    ['rng-rpm', 'rng-speed', 'rng-fuel', 'rng-temp'].forEach((id) => {
+      el(id).addEventListener('input', () => {
+        el('lbl-demo-rpm').textContent = el('rng-rpm').value;
+        el('lbl-demo-speed').textContent = el('rng-speed').value;
+        el('lbl-demo-fuel').textContent = el('rng-fuel').value;
+        el('lbl-demo-temp').textContent = el('rng-temp').value;
+      });
+    });
+
+    // -------------------------------
+    // CANVAS CHART RENDERER
+    // -------------------------------
+    function drawChart(canvas, values, maxY, strokeColor) {
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width, h = canvas.height;
+      const padL = 44, padR = 12, padT = 10, padB = 20;
+      const pw = w - padL - padR, ph = h - padT - padB;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // Grid lines
+      ctx.strokeStyle = '#142236';
+      ctx.fillStyle = '#6c85a3';
+      ctx.font = '11px Segoe UI, sans-serif';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const y = padT + (i / 4) * ph;
+        const val = Math.round(maxY * (1 - i / 4));
+        ctx.beginPath();
+        ctx.moveTo(padL, y);
+        ctx.lineTo(w - padR, y);
+        ctx.stroke();
+        ctx.fillText(String(val), 4, y + 4);
+      }
+
+      if (values.length < 2) return;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      for (let i = 0; i < values.length; i++) {
+        const x = padL + (i / (values.length - 1)) * pw;
+        const clamped = Math.max(0, Math.min(maxY, values[i]));
+        const y = padT + (1 - clamped / maxY) * ph;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+
+    // -------------------------------
+    // RENDER LOOP (15 FPS)
+    // -------------------------------
+    let lastChartPush = 0;
+    function render() {
+      const fuel = state.demoMode ? Number(el('rng-fuel').value) : 75;
+      const rpm = state.demoMode ? Number(el('rng-rpm').value) : state.lastRpm;
+      const speed = state.demoMode ? Number(el('rng-speed').value) : state.lastSpeed;
+      const gear = state.lastGear;
+      const throttle = state.lastThrottle;
+      const temp = state.demoMode ? Number(el('rng-temp').value) : (85 + Math.floor(throttle * 0.1));
+
+      if (state.demoMode && Date.now() - lastChartPush > 200) {
+        lastChartPush = Date.now();
+        state.history.push({ rpm, speed });
+        if (state.history.length > 300) state.history.shift();
+      }
+
+      const speedDeg = -130 + (Math.max(0, Math.min(220, speed)) / 220) * 260;
+      const tachDeg = -130 + (Math.max(0, Math.min(8, rpm / 1000)) / 8) * 260;
+      const fuelDeg = -45 + (Math.max(0, Math.min(100, fuel)) / 100) * 90;
+      const tempDeg = -45 + ((Math.max(40, Math.min(120, temp)) - 40) / 80) * 90;
+
+      needleSpeed.setAttribute('transform', `rotate(${speedDeg.toFixed(1)}, 370, 245)`);
+      needleTach.setAttribute('transform', `rotate(${tachDeg.toFixed(1)}, 870, 245)`);
+      needleFuel.setAttribute('transform', `rotate(${fuelDeg.toFixed(1)}, 105, 325)`);
+      needleTemp.setAttribute('transform', `rotate(${tempDeg.toFixed(1)}, 1135, 325)`);
+      midSpeed.textContent = String(Math.round(speed));
+
+      const parkBrake = speed < 5;
+      const pbColor = parkBrake ? '#38b6ff' : '#1c324a';
+      el('icon-park').setAttribute('filter', parkBrake ? 'url(#neon-glow)' : '');
+      el('park-c').setAttribute('stroke', pbColor);
+      el('park-p1').setAttribute('stroke', pbColor);
+      el('park-p2').setAttribute('stroke', pbColor);
+      el('park-t').setAttribute('fill', pbColor);
+
+      const warning = rpm >= 6500;
+      const wColor = warning ? '#ff4444' : '#38b6ff';
+      el('icon-warn').setAttribute('filter', warning ? 'url(#red-glow)' : 'url(#neon-glow)');
+      el('warn-c').setAttribute('stroke', wColor);
+      el('warn-p1').setAttribute('stroke', wColor);
+      el('warn-p2').setAttribute('stroke', wColor);
+      el('warn-t').setAttribute('fill', wColor);
+
+      el('m-speed').textContent = `${Math.round(speed)} KM/H`;
+      el('m-rpm').textContent = `${Math.round(rpm).toLocaleString()} RPM`;
+      el('m-gear').textContent = `${Math.round(gear)}`;
+      el('m-throttle').textContent = `${Math.round(throttle)} %`;
+
+      const receiving = (Date.now() - state.lastRxMs) < 2000;
+      el('m-status').textContent = state.demoMode
+        ? 'DEMO'
+        : (!state.connected ? 'WAITING LINK' : (receiving ? 'LIVE' : 'NO DATA'));
+
+      const calBanner = el('cal-banner');
+      const adcCap = el('adc-caption');
+      if (state.connected && state.lastRaw !== null) {
+        if (state.calActive) {
+          calBanner.style.display = 'block';
+          adcCap.style.display = 'none';
+          calBanner.innerHTML = `🎯 Calibration Active — Sweep your knob from full MIN to full MAX, then click <b>✅ Save</b> in the sidebar. | Live Raw ADC: <code>${state.lastRaw}</code> | Captured Min: <code>${state.calMin}</code> | Captured Max: <code>${state.calMax}</code>`;
+        } else {
+          calBanner.style.display = 'none';
+          adcCap.style.display = 'block';
+          adcCap.innerHTML = `Potentiometer ADC: <code>${state.lastRaw}</code> | Active Range: <code>[${state.calMin} .. ${state.calMax}]</code>`;
+        }
+      } else {
+        calBanner.style.display = 'none';
+        adcCap.style.display = 'none';
+      }
+
+      if (state.history.length > 1) {
+        el('charts-empty').style.display = 'none';
+        el('charts-grid').style.display = 'grid';
+        drawChart(el('cv-rpm'), state.history.map(d => d.rpm), 8000, '#38b6ff');
+        drawChart(el('cv-speed'), state.history.map(d => d.speed), 260, '#42d9ff');
+      } else {
+        el('charts-empty').style.display = 'block';
+        el('charts-grid').style.display = 'none';
+      }
+    }
+
+    setInterval(render, 66);
+  </script>
+</body>
+</html>
