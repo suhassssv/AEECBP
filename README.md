@@ -12,6 +12,6 @@ Automotive digital instrument cluster for Arduino (`A0` potentiometer) featuring
 
 ## Local Streamlit Version (Optional)
 ```bash
-pip install -r local_streamlit/requirements.txt
+pip install streamlit pyserial pandas
 streamlit run local_streamlit/dashboard.py
 ```
